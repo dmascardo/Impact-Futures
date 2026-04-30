@@ -57,7 +57,7 @@ function SectionBox({
       </div>
 
       <p className="mt-2 text-xs leading-none text-slate-700">
-        {category.description}
+        {category.children?.length ?? 0} framework areas
       </p>
 
       <div
@@ -66,15 +66,16 @@ function SectionBox({
         } gap-x-4 gap-y-5`}
       >
         {(category.children ?? []).map((child) => (
-          <div key={child.id} className="min-w-0">
+          <div
+            key={child.id}
+            className="min-w-0 rounded-md bg-white/45 px-2 py-2 ring-1 ring-white/70"
+          >
             <h3 className="text-[11px] font-black leading-tight text-slate-950">
               {child.title}
             </h3>
-            <div className="mt-2 space-y-1.5 text-[10px] leading-snug text-slate-700">
-              {child.points?.map((point) => (
-                <p key={point}>{point}</p>
-              ))}
-            </div>
+            <p className="mt-1 text-[10px] font-semibold text-slate-600">
+              {child.points?.length ?? 0} items
+            </p>
           </div>
         ))}
       </div>
