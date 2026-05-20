@@ -1,8 +1,353 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import type { FrameworkNode } from '../types';
 
 interface DetailPanelProps {
   category: FrameworkNode;
   onClose: () => void;
+}
+
+interface PreziModalProps {
+  titleId: string;
+  onClose: () => void;
+  className: string;
+  style?: CSSProperties;
+  canvasClassName?: string;
+  children: ReactNode;
+}
+
+const minZoom = 0.18;
+const maxZoom = 2.8;
+
+function clampZoom(value: number) {
+  return Math.min(maxZoom, Math.max(minZoom, value));
+}
+
+function PreziModal({
+  titleId,
+  onClose,
+  className,
+  style,
+  canvasClassName = 'w-[92rem]',
+  children,
+}: PreziModalProps) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef({ active: false, x: 0, y: 0, moved: false });
+  const [view, setView] = useState({ scale: 0.7, x: 0, y: 0 });
+  const [overviewScale, setOverviewScale] = useState(0.7);
+  const [panMode, setPanMode] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+
+  const fitToOverview = useCallback(() => {
+    const viewport = viewportRef.current;
+    const canvas = canvasRef.current;
+
+    if (!viewport || !canvas) {
+      return;
+    }
+
+    const nextScale = clampZoom(
+      Math.min(
+        0.86,
+        (viewport.clientWidth - 36) / canvas.scrollWidth,
+        (viewport.clientHeight - 36) / canvas.scrollHeight,
+      ),
+    );
+
+    setOverviewScale(nextScale);
+    setView({
+      scale: nextScale,
+      x: (viewport.clientWidth - canvas.scrollWidth * nextScale) / 2,
+      y: (viewport.clientHeight - canvas.scrollHeight * nextScale) / 2,
+    });
+    viewport.focus({ preventScroll: true });
+  }, []);
+
+  const zoomAround = useCallback((nextScale: number, anchorX?: number, anchorY?: number) => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) {
+      return;
+    }
+
+    const localAnchorX = anchorX ?? viewport.clientWidth / 2;
+    const localAnchorY = anchorY ?? viewport.clientHeight / 2;
+
+    setView((current) => {
+      const scale = clampZoom(nextScale);
+      const unscaledX = (localAnchorX - current.x) / current.scale;
+      const unscaledY = (localAnchorY - current.y) / current.scale;
+
+      return {
+        scale,
+        x: localAnchorX - unscaledX * scale,
+        y: localAnchorY - unscaledY * scale,
+      };
+    });
+
+    viewport.focus({ preventScroll: true });
+  }, []);
+
+  const focusBox = useCallback((target: HTMLElement) => {
+    const viewport = viewportRef.current;
+    const canvas = canvasRef.current;
+
+    if (!viewport || !canvas) {
+      return;
+    }
+
+    canvas
+      .querySelectorAll('.prezi-focused')
+      .forEach((element) => element.classList.remove('prezi-focused'));
+    target.classList.add('prezi-focused');
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetCenterX = (targetRect.left + targetRect.width / 2 - canvasRect.left) / view.scale;
+    const targetCenterY = (targetRect.top + targetRect.height / 2 - canvasRect.top) / view.scale;
+    const nextScale = clampZoom(
+      Math.max(
+        1.08,
+        Math.min(
+          maxZoom,
+          (viewportRect.width * 0.72) / Math.max(targetRect.width / view.scale, 1),
+          (viewportRect.height * 0.68) / Math.max(targetRect.height / view.scale, 1),
+        ),
+      ),
+    );
+
+    setView({
+      scale: nextScale,
+      x: viewport.clientWidth / 2 - targetCenterX * nextScale,
+      y: viewport.clientHeight / 2 - targetCenterY * nextScale,
+    });
+    viewport.focus({ preventScroll: true });
+  }, [view.scale]);
+
+  useEffect(() => {
+    fitToOverview();
+    window.addEventListener('resize', fitToOverview);
+
+    return () => window.removeEventListener('resize', fitToOverview);
+  }, [fitToOverview]);
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+    >
+      <section
+        className={`relative h-[92vh] w-full animate-zoomIn overflow-hidden rounded-xl border-2 px-0 py-0 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] ${className}`}
+        style={style}
+      >
+        <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPanMode((enabled) => !enabled)}
+            aria-label={panMode ? 'Disable pan mode' : 'Enable pan mode'}
+            aria-pressed={panMode}
+            className={`flex h-8 w-8 items-center justify-center rounded-full border-2 border-neutral-700 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black ${
+              panMode
+                ? 'bg-black text-white'
+                : 'bg-white/85 hover:bg-black hover:text-white'
+            }`}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+            >
+              <path d="M8 11V7a2 2 0 1 1 4 0v4" />
+              <path d="M12 11V6a2 2 0 1 1 4 0v6" />
+              <path d="M16 12V8a2 2 0 1 1 4 0v7a6 6 0 0 1-6 6h-2.5a6 6 0 0 1-4.7-2.3L4 15a2 2 0 1 1 3.2-2.4l1.1 1.4" />
+              <path d="M8 11v3" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomAround(view.scale * 1.18)}
+            className="h-8 w-8 rounded-full border-2 border-neutral-700 bg-white/85 text-sm font-black transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+            aria-label="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (view.scale <= overviewScale * 1.08) {
+                fitToOverview();
+                return;
+              }
+
+              zoomAround(view.scale / 1.18);
+            }}
+            className="h-8 w-8 rounded-full border-2 border-neutral-700 bg-white/85 text-sm font-black transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+            aria-label="Zoom out"
+          >
+            -
+          </button>
+          <button
+            type="button"
+            onClick={fitToOverview}
+            className="rounded-full border-2 border-neutral-700 bg-white/85 px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border-2 border-neutral-700 bg-white/85 px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
+          >
+            Close
+          </button>
+        </div>
+
+        <div
+          ref={viewportRef}
+          className="prezi-viewport h-full w-full overflow-hidden outline-none"
+          data-pan-mode={panMode ? 'true' : 'false'}
+          data-panning={isPanning ? 'true' : 'false'}
+          data-readable={view.scale > overviewScale * 1.75 ? 'true' : 'false'}
+          tabIndex={0}
+          onWheel={(event) => {
+            event.preventDefault();
+            const viewport = viewportRef.current;
+
+            if (!viewport) {
+              return;
+            }
+
+            const rect = viewport.getBoundingClientRect();
+            const delta = event.deltaY < 0 ? 1.16 : 1 / 1.16;
+            zoomAround(view.scale * delta, event.clientX - rect.left, event.clientY - rect.top);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === '+' || event.key === '=') {
+              event.preventDefault();
+              zoomAround(view.scale * 1.18);
+            }
+
+            if (event.key === '-' || event.key === '_') {
+              event.preventDefault();
+              zoomAround(view.scale / 1.18);
+            }
+
+            if (event.key === '0') {
+              event.preventDefault();
+              fitToOverview();
+            }
+
+            if (event.key.toLowerCase() === 'h') {
+              event.preventDefault();
+              setPanMode((enabled) => !enabled);
+            }
+
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              if (panMode) {
+                setPanMode(false);
+                return;
+              }
+
+              if (view.scale > overviewScale * 1.3) {
+                fitToOverview();
+              } else {
+                onClose();
+              }
+            }
+          }}
+          onPointerDown={(event) => {
+            if (!panMode || event.button !== 0) {
+              return;
+            }
+
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current = {
+              active: true,
+              x: event.clientX,
+              y: event.clientY,
+              moved: false,
+            };
+            setIsPanning(true);
+            viewportRef.current?.focus({ preventScroll: true });
+          }}
+          onPointerMove={(event) => {
+            if (!dragRef.current.active) {
+              return;
+            }
+
+            const dx = event.clientX - dragRef.current.x;
+            const dy = event.clientY - dragRef.current.y;
+
+            if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+              dragRef.current.moved = true;
+            }
+
+            dragRef.current.x = event.clientX;
+            dragRef.current.y = event.clientY;
+
+            setView((current) => ({
+              ...current,
+              x: current.x + dx,
+              y: current.y + dy,
+            }));
+          }}
+          onPointerUp={(event) => {
+            if (!dragRef.current.active) {
+              return;
+            }
+
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            dragRef.current.active = false;
+            setIsPanning(false);
+          }}
+          onPointerCancel={() => {
+            dragRef.current.active = false;
+            setIsPanning(false);
+          }}
+          onClick={(event) => {
+            if (panMode || dragRef.current.moved) {
+              dragRef.current.moved = false;
+              return;
+            }
+
+            const target = event.target as HTMLElement;
+            const box = target.closest('[data-prezi-box="true"]');
+
+            if (box instanceof HTMLElement) {
+              focusBox(box);
+            }
+          }}
+        >
+          <div
+            ref={canvasRef}
+            className={`prezi-canvas p-5 sm:p-8 ${canvasClassName}`}
+            style={{
+              transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})`,
+            }}
+          >
+            {children}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 const preventionProgramGroups = [
@@ -35,11 +380,12 @@ function DottedPanel({
   children,
   className = '',
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
   return (
     <div
+      data-prezi-box="true"
       className={`rounded-lg border-2 border-neutral-500/70 bg-white/65 shadow-[0_1px_0_rgba(0,0,0,0.04)] ${className}`}
     >
       {children}
@@ -54,14 +400,16 @@ function SupportItem({
   titleClassName = '',
 }: {
   title: string;
-  children?: React.ReactNode;
+  children?: ReactNode;
   className?: string;
   titleClassName?: string;
 }) {
   return (
     <DottedPanel className={`px-4 py-3 text-left ${className}`}>
-      <h5 className={`font-semibold leading-tight ${titleClassName}`}>{title}</h5>
-      {children ? <div className="mt-2 text-[13px] leading-snug">{children}</div> : null}
+      <h5 className={`break-words font-semibold leading-tight ${titleClassName}`}>{title}</h5>
+      {children ? (
+        <div className="prezi-detail-copy mt-2 text-[13px] leading-snug">{children}</div>
+      ) : null}
     </DottedPanel>
   );
 }
@@ -76,32 +424,13 @@ function BulletList({ items }: { items: string[] }) {
   );
 }
 
-function SupportSection({
-  title,
-  children,
-  className = '',
-}: {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <section className={`pt-5 ${className}`}>
-      <h3 className="text-center text-5xl font-black leading-none tracking-wide sm:text-7xl">
-        {title}
-      </h3>
-      <div className="mt-7">{children}</div>
-    </section>
-  );
-}
-
 function AccessNavigationLayout({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className={`grid gap-6 ${compact ? 'xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
       <DottedPanel className="p-4 sm:p-6">
         <h4 className="text-center text-2xl font-black leading-none sm:text-3xl">Navigation</h4>
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <SupportItem title="Workforce Culture" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Workforce Culture" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>
               Friendly and skilled staff that are ready to help people feel comfortable and get
               the care they need.
@@ -113,17 +442,17 @@ function AccessNavigationLayout({ compact = false }: { compact?: boolean }) {
               ]}
             />
           </SupportItem>
-          <SupportItem title="Easy Centralized Entry Points" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Easy Centralized Entry Points" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>
               Clear and simple ways for people to find and enter the system and get help quickly
               (i.e. resource centers).
             </p>
             <BulletList items={['COA first responder receiving area']} />
           </SupportItem>
-          <SupportItem title="Communication" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Communication" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>Facilitating reliability between workforce and clients</p>
           </SupportItem>
-          <SupportItem title="Transportation" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Transportation" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>
               Helping people get to and from their appointments or services, especially if they
               don't have their own way to travel.
@@ -140,7 +469,7 @@ function AccessNavigationLayout({ compact = false }: { compact?: boolean }) {
       <DottedPanel className="p-4 sm:p-6">
         <h4 className="text-center text-2xl font-black leading-none sm:text-3xl">Access</h4>
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <SupportItem title="Insurance and Affordability" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Insurance and Affordability" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>Helping people understand and access insurance for behavioral health services.</p>
             <BulletList
               items={[
@@ -151,10 +480,10 @@ function AccessNavigationLayout({ compact = false }: { compact?: boolean }) {
               ]}
             />
           </SupportItem>
-          <SupportItem title="Emergency Response Services" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="Emergency Response Services" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>An electronic device that helps you get assistance in an emergency.</p>
           </SupportItem>
-          <SupportItem title="App-Based and Telehealth" className={compact ? 'min-h-[128px]' : 'min-h-[210px]'}>
+          <SupportItem title="App-Based and Telehealth" className={compact ? 'min-h-[148px]' : 'min-h-[210px]'}>
             <p>
               Remote support (phone/video) to make it easier to get care without leaving home
               (i.e. peer recovery groups, sobriety tracking, primary care, behavioral health care)
@@ -169,7 +498,7 @@ function AccessNavigationLayout({ compact = false }: { compact?: boolean }) {
 
 function SupportRolesLayout({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className={`grid gap-6 ${compact ? 'xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
       <DottedPanel className="p-4 sm:p-6">
         <h4 className="text-center text-2xl font-black leading-none sm:text-3xl">
           Case &amp; System Management
@@ -233,7 +562,7 @@ function SupportRolesLayout({ compact = false }: { compact?: boolean }) {
 
 function CommunityHomeLayout({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className={`grid gap-6 ${compact ? 'xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
       <DottedPanel className="p-4 sm:p-6">
         <h4 className="text-center text-2xl font-black leading-none">Community</h4>
         <div className="mt-5 grid gap-5 sm:grid-cols-2">
@@ -332,7 +661,7 @@ function HousingLayout({ compact = false }: { compact?: boolean }) {
   ];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <div className={`grid gap-6 ${compact ? 'xl:grid-cols-3' : 'lg:grid-cols-3'}`}>
       {[
         ['Permanent', permanent],
         ['Short-Term', shortTerm],
@@ -362,29 +691,18 @@ function HousingLayout({ compact = false }: { compact?: boolean }) {
 
 function SupportPanel({ onClose }: DetailPanelProps) {
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="support-detail-title"
+    <PreziModal
+      titleId="support-detail-title"
+      onClose={onClose}
+      className="max-w-[96rem] border-sky-500/60"
+      canvasClassName="w-[136rem]"
+      style={{
+        backgroundColor: '#e0f2fe',
+        backgroundImage:
+          'radial-gradient(circle, rgba(14, 116, 144, 0.24) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(240, 249, 255, 0.95), rgba(207, 250, 254, 0.92))',
+        backgroundSize: '16px 16px, auto',
+      }}
     >
-      <section
-        className="relative max-h-[92vh] w-full max-w-[96rem] animate-zoomIn overflow-y-auto rounded-xl border-2 border-sky-500/60 px-4 pb-8 pt-5 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:px-8"
-        style={{
-          backgroundColor: '#e0f2fe',
-          backgroundImage:
-            'radial-gradient(circle, rgba(14, 116, 144, 0.24) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(240, 249, 255, 0.95), rgba(207, 250, 254, 0.92))',
-          backgroundSize: '16px 16px, auto',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full border-2 border-sky-700 bg-white/80 px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-sky-950 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-950"
-        >
-          Close
-        </button>
-
         <header className="mx-auto max-w-2xl text-center">
           <h2
             id="support-detail-title"
@@ -395,49 +713,40 @@ function SupportPanel({ onClose }: DetailPanelProps) {
           <p className="mt-4 text-2xl font-medium leading-none">Description:</p>
         </header>
 
-        <div className="mt-8 grid gap-7 lg:grid-cols-2">
-          <DottedPanel className="bg-cyan-50/55 p-4">
-            <h3 className="text-center text-2xl font-black">ACCESS &amp; NAVIGATION</h3>
-            <div className="mt-4 scale-[0.92] origin-top">
+        <div className="mt-8 grid gap-8 xl:grid-cols-2">
+          <DottedPanel className="bg-cyan-50/55 p-4 sm:p-5">
+            <h3 className="text-center text-3xl font-black leading-none">
+              ACCESS &amp; NAVIGATION
+            </h3>
+            <div className="mt-4">
               <AccessNavigationLayout compact />
             </div>
           </DottedPanel>
-          <DottedPanel className="bg-cyan-50/55 p-4">
-            <h3 className="text-center text-2xl font-black">SUPPORT ROLES</h3>
-            <div className="mt-4 scale-[0.92] origin-top">
+
+          <DottedPanel className="bg-cyan-50/55 p-4 sm:p-5">
+            <h3 className="text-center text-3xl font-black leading-none">SUPPORT ROLES</h3>
+            <div className="mt-4">
               <SupportRolesLayout compact />
             </div>
           </DottedPanel>
-          <DottedPanel className="bg-cyan-50/55 p-4">
-            <h3 className="text-center text-2xl font-black">COMMUNITY &amp; IN-HOME</h3>
-            <div className="mt-4 scale-[0.9] origin-top">
+
+          <DottedPanel className="bg-cyan-50/55 p-4 sm:p-5">
+            <h3 className="text-center text-3xl font-black leading-none">
+              COMMUNITY &amp; IN-HOME
+            </h3>
+            <div className="mt-4">
               <CommunityHomeLayout compact />
             </div>
           </DottedPanel>
-          <DottedPanel className="bg-cyan-50/55 p-4">
-            <h3 className="text-center text-2xl font-black">HOUSING</h3>
-            <div className="mt-4 scale-[0.92] origin-top">
+
+          <DottedPanel className="bg-cyan-50/55 p-4 sm:p-5">
+            <h3 className="text-center text-3xl font-black leading-none">HOUSING</h3>
+            <div className="mt-4">
               <HousingLayout compact />
             </div>
           </DottedPanel>
         </div>
-
-        <div className="mt-12 grid gap-14">
-          <SupportSection title="ACCESS & NAVIGATION">
-            <AccessNavigationLayout />
-          </SupportSection>
-          <SupportSection title="SUPPORT ROLES">
-            <SupportRolesLayout />
-          </SupportSection>
-          <SupportSection title="COMMUNITY & IN-HOME">
-            <CommunityHomeLayout />
-          </SupportSection>
-          <SupportSection title="HOUSING">
-            <HousingLayout />
-          </SupportSection>
-        </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
 
@@ -528,29 +837,17 @@ function TreatmentPanel({ onClose }: DetailPanelProps) {
   ];
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="treatment-detail-title"
+    <PreziModal
+      titleId="treatment-detail-title"
+      onClose={onClose}
+      className="max-w-[96rem] border-orange-500/60"
+      style={{
+        backgroundColor: '#ffedd5',
+        backgroundImage:
+          'radial-gradient(circle, rgba(194, 65, 12, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(255, 251, 235, 0.96), rgba(254, 215, 170, 0.9))',
+        backgroundSize: '16px 16px, auto',
+      }}
     >
-      <section
-        className="relative max-h-[92vh] w-full max-w-[96rem] animate-zoomIn overflow-y-auto rounded-xl border-2 border-orange-500/60 px-4 pb-8 pt-5 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:px-8"
-        style={{
-          backgroundColor: '#ffedd5',
-          backgroundImage:
-            'radial-gradient(circle, rgba(194, 65, 12, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(255, 251, 235, 0.96), rgba(254, 215, 170, 0.9))',
-          backgroundSize: '16px 16px, auto',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full border-2 border-orange-700 bg-white/80 px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-orange-950 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-950"
-        >
-          Close
-        </button>
-
         <header className="mx-auto max-w-2xl text-center">
           <h2
             id="treatment-detail-title"
@@ -575,8 +872,7 @@ function TreatmentPanel({ onClose }: DetailPanelProps) {
             </DottedPanel>
           ))}
         </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
 
@@ -586,29 +882,17 @@ function CriticalPanel({ category, onClose }: DetailPanelProps) {
   const justice = category.children?.find((child) => child.id === 'critical-justice');
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="critical-detail-title"
+    <PreziModal
+      titleId="critical-detail-title"
+      onClose={onClose}
+      className="max-w-7xl border-rose-500/60"
+      style={{
+        backgroundColor: '#ffe4e6',
+        backgroundImage:
+          'radial-gradient(circle, rgba(190, 18, 60, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(255, 241, 242, 0.96), rgba(254, 205, 211, 0.88))',
+        backgroundSize: '16px 16px, auto',
+      }}
     >
-      <section
-        className="relative max-h-[92vh] w-full max-w-7xl animate-zoomIn overflow-y-auto rounded-xl border-2 border-rose-500/60 px-4 pb-6 pt-5 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:px-9 sm:pb-9"
-        style={{
-          backgroundColor: '#ffe4e6',
-          backgroundImage:
-            'radial-gradient(circle, rgba(190, 18, 60, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(255, 241, 242, 0.96), rgba(254, 205, 211, 0.88))',
-          backgroundSize: '16px 16px, auto',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full border-2 border-neutral-600 bg-white px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
-        >
-          Close
-        </button>
-
         <header className="mx-auto max-w-2xl text-center">
           <h2
             id="critical-detail-title"
@@ -664,8 +948,7 @@ function CriticalPanel({ category, onClose }: DetailPanelProps) {
             </div>
           </DottedPanel>
         </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
 
@@ -681,36 +964,75 @@ function QualityCard({
   return (
     <DottedPanel className={`px-3 py-2 text-left ${className}`}>
       <h5 className="text-center text-sm font-black leading-tight">{title}</h5>
-      {children ? <div className="mt-3 text-[11px] leading-tight">{children}</div> : null}
+      {children ? (
+        <div className="prezi-detail-copy mt-3 text-[11px] leading-tight">{children}</div>
+      ) : null}
+    </DottedPanel>
+  );
+}
+
+const licensingBoards = [
+  {
+    title: 'Counseling and Therapy Practice Board',
+    details:
+      'Licensed Professional Clinical Counselor, Licensed Mental Health Counselor, Licensed Marriage and Family Therapist, Licensed Professional Art Therapist, Licensed Alcohol and Drug Abuse Counselor, Licensed Associate Marriage and Family Therapist',
+  },
+  {
+    title: 'Credentialing Board for Behavioral Health Professionals',
+    details:
+      'Certified Prevention Intern, Certified Prevention Specialist, Senior Certified Prevention Specialist, Certified Alcohol and Drug Counselor, Certified Clinical Supervisor, Certified Peer Support Worker, Certified Family Peer Support Worker, Certified Youth Peer Support Specialist, Certified Wraparound Facilitator',
+  },
+  {
+    title: 'Board of Social Work Examiners',
+    details:
+      'Licensed Baccalaureate Social Worker, Licensed Master Social Worker, Licensed Clinical Social Worker, Licensed Independent Social Worker',
+  },
+  {
+    title: 'Board of Nursing',
+    details:
+      'Registered Nurse, Certified Nurse Practitioner - Psychiatric, Clinical Nurse Specialist-Psychiatric',
+  },
+  {
+    title: 'Medical Board',
+    details:
+      'Medical Doctors, Doctors of Osteopathic Medicine including Psychiatrists, Physician Assistants',
+  },
+  {
+    title: 'State Board of Psychologist Examiners',
+    details: 'Psychologists, Psychologist Associates, Prescribing Psychologists',
+  },
+];
+
+function LicensingBoardCard({
+  title,
+  details,
+}: {
+  title: string;
+  details: string;
+}) {
+  return (
+    <DottedPanel className="flex min-h-[82px] flex-col justify-center px-4 py-3 text-left">
+      <h5 className="text-center text-[13px] font-normal leading-tight">{title}</h5>
+      <p className="prezi-detail-copy mt-1 text-center text-[11px] leading-tight">
+        ({details})
+      </p>
     </DottedPanel>
   );
 }
 
 function QualityPanel({ onClose }: DetailPanelProps) {
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="quality-detail-title"
+    <PreziModal
+      titleId="quality-detail-title"
+      onClose={onClose}
+      className="max-w-[96rem] border-violet-500/60"
+      style={{
+        backgroundColor: '#ede9fe',
+        backgroundImage:
+          'radial-gradient(circle, rgba(109, 40, 217, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(245, 243, 255, 0.96), rgba(245, 208, 254, 0.82))',
+        backgroundSize: '16px 16px, auto',
+      }}
     >
-      <section
-        className="relative max-h-[92vh] w-full max-w-[96rem] animate-zoomIn overflow-y-auto rounded-xl border-2 border-violet-500/60 px-4 pb-6 pt-5 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:px-8 sm:pb-8"
-        style={{
-          backgroundColor: '#ede9fe',
-          backgroundImage:
-            'radial-gradient(circle, rgba(109, 40, 217, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(245, 243, 255, 0.96), rgba(245, 208, 254, 0.82))',
-          backgroundSize: '16px 16px, auto',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full border-2 border-neutral-600 bg-white px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
-        >
-          Close
-        </button>
-
         <header className="mx-auto max-w-2xl text-center">
           <h2
             id="quality-detail-title"
@@ -794,16 +1116,13 @@ function QualityPanel({ onClose }: DetailPanelProps) {
                 <h4 className="text-center text-base font-black">
                   Licensing &amp; Credentialing Boards
                 </h4>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {[
-                    'Counseling and Therapy Practice Board',
-                    'Credentialing Board for Behavioral Health Professionals',
-                    'Board of Social Work Examiners',
-                    'Board of Nursing',
-                    'Medical board',
-                    'State Board of Psychologist Examiners',
-                  ].map((item) => (
-                    <QualityCard key={item} title={item} className="min-h-[48px]" />
+                <div className="mt-5 grid gap-x-7 gap-y-5 sm:grid-cols-2">
+                  {licensingBoards.map((board) => (
+                    <LicensingBoardCard
+                      key={board.title}
+                      title={board.title}
+                      details={board.details}
+                    />
                   ))}
                 </div>
               </DottedPanel>
@@ -957,8 +1276,7 @@ function QualityPanel({ onClose }: DetailPanelProps) {
             </div>
           </DottedPanel>
         </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
 
@@ -967,29 +1285,17 @@ function WellnessPanel({ category, onClose }: DetailPanelProps) {
   const belonging = category.children?.find((child) => child.id === 'wellness-belonging');
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="wellness-detail-title"
+    <PreziModal
+      titleId="wellness-detail-title"
+      onClose={onClose}
+      className="max-w-7xl border-emerald-500/60"
+      style={{
+        backgroundColor: '#d1fae5',
+        backgroundImage:
+          'radial-gradient(circle, rgba(4, 120, 87, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(236, 253, 245, 0.96), rgba(217, 249, 157, 0.82))',
+        backgroundSize: '16px 16px, auto',
+      }}
     >
-      <section
-        className="relative max-h-[92vh] w-full max-w-7xl animate-zoomIn overflow-y-auto rounded-xl border-2 border-emerald-500/60 px-4 pb-6 pt-5 text-black shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:px-9 sm:pb-9"
-        style={{
-          backgroundColor: '#d1fae5',
-          backgroundImage:
-            'radial-gradient(circle, rgba(4, 120, 87, 0.22) 1.25px, transparent 1.25px), linear-gradient(135deg, rgba(236, 253, 245, 0.96), rgba(217, 249, 157, 0.82))',
-          backgroundSize: '16px 16px, auto',
-        }}
-      >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute right-3 top-3 rounded-full border-2 border-neutral-600 bg-white px-3 py-1 text-xs font-black uppercase tracking-wide transition hover:bg-black hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
-        >
-          Close
-        </button>
-
         <header className="mx-auto max-w-2xl text-center">
           <h2
             id="wellness-detail-title"
@@ -1061,8 +1367,7 @@ function WellnessPanel({ category, onClose }: DetailPanelProps) {
             </div>
           </DottedPanel>
         </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
 
@@ -1088,14 +1393,12 @@ export function DetailPanel({ category, onClose }: DetailPanelProps) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="section-detail-title"
+    <PreziModal
+      titleId="section-detail-title"
+      onClose={onClose}
+      className="max-w-5xl border-amber-200 bg-gradient-to-br from-white via-amber-50 to-rose-50"
     >
-      <section className="max-h-[88vh] w-full max-w-5xl animate-zoomIn overflow-y-auto rounded-2xl border border-amber-200 bg-gradient-to-br from-white via-amber-50 to-rose-50 p-6 text-slate-950 shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:p-8">
-        <div className="flex items-start justify-between gap-5 border-b border-amber-300 pb-4">
+        <div className="border-b border-amber-300 pb-4">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.24em] text-rose-700">
               Section Details
@@ -1105,19 +1408,13 @@ export function DetailPanel({ category, onClose }: DetailPanelProps) {
             </h2>
             <p className="mt-2 text-xl text-slate-700">{category.description}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 rounded-full border border-slate-950 bg-white/80 px-4 py-2 text-sm font-black uppercase transition hover:bg-slate-950 hover:text-white"
-          >
-            Close
-          </button>
         </div>
 
         <div className="mt-7 grid gap-5">
           {(category.children ?? []).map((child) => (
             <details
               key={child.id}
+              data-prezi-box="true"
               className="group rounded-xl border border-white/80 bg-white/75 shadow-[0_12px_35px_rgba(120,53,15,0.08)] open:bg-white/95"
             >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5">
@@ -1158,7 +1455,6 @@ export function DetailPanel({ category, onClose }: DetailPanelProps) {
             </details>
           ))}
         </div>
-      </section>
-    </div>
+    </PreziModal>
   );
 }
